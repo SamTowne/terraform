@@ -1,16 +1,25 @@
-data "aws_availability_zones" "all" {}
-
-provider "aws" {
-    region = "us-east-1"
-}
-
 terraform {
     backend "s3" {
         bucket = "terraform-up-and-running-state-set"
         region = "us-east-1"
-        key = "terraform.tfstate"
+        key = "stage/services/webserver-cluster/terraform.tfstate"
         encrypt = true
+        dynamodb_table = "my-stage-lock-table"
     }
+}
+
+data "terraform_remote_state" "db" {
+    backend = "s3"
+
+    config = {
+        bucket = "terraform-up-and-running-state-set"
+        key = "stage/data-stores/mysql/terraform.tfstate"
+        region = "us-east-1"
+    }
+}
+
+provider "aws" {
+    region = "us-east-1"
 }
 
 resource "aws_launch_configuration" "example" {
@@ -21,17 +30,14 @@ resource "aws_launch_configuration" "example" {
     user_data = <<-EOF
                 #!/bin/bash
                 echo "Hello, World" > index.html
+                echo "${data.terraform_remote_state.db.outputs.address}" >> index.html
+                echo "${data.terraform_remote_state.db.outputs.port}" >> index.html
                 nohup busybox httpd -f -p "${var.server_port}" &
                 EOF
 
     lifecycle {
         create_before_destroy = true
     }
-}
-
-variable "server_port" {
-    description = "The port the server will use for HTTP requests"
-    default = 8080
 }
 
 resource "aws_security_group" "instance" {
@@ -87,6 +93,7 @@ resource "aws_elb" "example" {
     }
 }
 
+
 resource "aws_security_group" "elb" {
     name = "terraform-example-elb"
 
@@ -105,7 +112,4 @@ resource "aws_security_group" "elb" {
     }
 }
 
-output "elb_dns_name" {
-    value = "${aws_elb.example.dns_name}"
-  
-}
+
